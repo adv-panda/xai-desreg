@@ -99,3 +99,21 @@ prediction, contribution_df, neighbors_df = des.predict_xai(X_test.iloc[[index]]
 
 print(prediction) 
 ```
+
+The content of contribution data frame: 
+| Model                  | Predictions | Competence | Weights |
+|------------------------|-------------|------------|---------|
+| XGBRegressor           | 9.133       | 0.064      | 15.609  |
+| RandomForestRegressor  | 8.890       | 0.078      | 12.853  |
+| LinearRegression       | 8.913       | 0.090      | 11.141  |
+| KNeighborsRegressor    | 9.000       | 0.072      | 13.846  |
+
+The samples in the region of competence (neighbors_df): 
+| Sex | Length | Diameter | Height | Whole_weight | Shucked_weight | Viscera_weight | Shell_weight | Target |
+|-----|--------|----------|--------|--------------|----------------|----------------|--------------|--------|
+| 2   | 0.565  | 0.44     | 0.125  | 0.802        | 0.3595         | 0.1825         | 0.215        | 9      |
+| 2   | 0.55   | 0.425    | 0.15   | 0.8315       | 0.411          | 0.1765         | 0.2165       | 10     |
+| 2   | 0.56   | 0.415    | 0.13   | 0.7615       | 0.3695         | 0.17           | 0.1955       | 8      |
+| 2   | 0.545  | 0.41     | 0.12   | 0.793        | 0.434          | 0.1405         | 0.19         | 9      |
+| 2   | 0.56   | 0.415    | 0.145  | 0.852        | 0.43           | 0.1885         | 0.205        | 8      |
+| 2   | 0.54   | 0.42     | 0.135  | 0.8075       | 0.3485         | 0.1795         | 0.235        | 11     |

@@ -4,7 +4,7 @@
 ### Installation 
 
 ```bash
-pip install infodesreg
+pip install xaidesreg
 ```
 
 
@@ -30,7 +30,7 @@ from ucimlrepo import fetch_ucirepo
 from ucimlrepo import fetch_ucirepo   
 
 # InfoDESReg 
-from infodesreg import DES
+from xaidesreg import DES
 ```
 
 Loading data: 

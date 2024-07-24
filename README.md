@@ -1,4 +1,4 @@
-## InfoDESReg
+## XAI-DESReg
 
 
 ### Installation 

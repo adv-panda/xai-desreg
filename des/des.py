@@ -3,7 +3,11 @@ import numpy as np
 import pandas as pd 
 from sklearn.neighbors import NearestNeighbors 
 from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
+from sklearn.model_selection import train_test_split  
 
+from sklearn.feature_selection import RFE   
+from sklearn.ensemble import RandomForestRegressor
+from lightgbm import LGBMRegressor
 
 def get_value(arr):
     if np.ndim(arr) == 0:  # Scalar case
@@ -14,14 +18,42 @@ def get_value(arr):
         return arr[0, 0]
     else:
         raise ValueError("Array shape not supported")
-        
 
-class BaseDER: 
-    def __init__(self, pool_regressors=None, k=7, knn_metric='minkowski', metrics='mse', threshold=0.2): 
-        self.pool_regressors = pool_regressors 
-        self.k               = k 
-        self.knn_metric      = knn_metric 
-        self.threshold       = threshold 
+
+def select(features, supports): 
+    selected_features = [] 
+    
+    for i in range(len(features)): 
+        if supports[i]: 
+            selected_features.append(features[i]) 
+    
+    return selected_features
+
+
+def count_model_occurrences(list_of_lists):
+    # Initialize a dictionary to store counts of each digit
+    digit_counts = {}
+
+    # Iterate through each sublist
+    for sublist in list_of_lists:
+        # Iterate through each digit in the sublist
+        for digit in sublist:
+            # Increment the count of the digit in the dictionary
+            if digit in digit_counts:
+                digit_counts[digit] += 1
+            else:
+                digit_counts[digit] = 1
+
+    return digit_counts
+    
+
+class BaseDES: 
+    def __init__(self, pool_regressors=None, k=7, knn_metric='minkowski', metrics='mse', threshold=0.2, feature_selection=False): 
+        self.pool_regressors   = pool_regressors 
+        self.k                 = k 
+        self.knn_metric        = knn_metric 
+        self.threshold         = threshold 
+        self.feature_selection = feature_selection
 
         if metrics == 'mse': 
             self.eval_metric = mean_squared_error 
@@ -31,8 +63,8 @@ class BaseDER:
 
 
     def get_region_of_competence(self, query): 
-        nbrs    = NearestNeighbors(n_neighbors=self.k, metric=self.knn_metric).fit(self.X_dsel)         
-        indices = nbrs.kneighbors(query.values.reshape(1, -1), return_distance=False) 
+        nbrs    = NearestNeighbors(n_neighbors=self.k, metric=self.knn_metric).fit(self.X_dsel[self.selected_features])         
+        indices = nbrs.kneighbors(query[self.selected_features].values.reshape(1, -1), return_distance=False) 
 
         self.roc = self.X_dsel.iloc[indices[0]] 
         self.roc_labels = self.y_dsel.iloc[indices[0]] 
@@ -42,7 +74,7 @@ class BaseDER:
         competence_list = [] 
         
         for regressor in self.pool_regressors: 
-            preds = regressor.predict(self.roc) 
+            preds = regressor.predict(self.roc[self.selected_features]) 
             competence = self.eval_metric(self.roc_labels, preds) 
             competence_list.append(competence) 
 
@@ -50,17 +82,38 @@ class BaseDER:
 
 
 
-class DES(BaseDER): 
-    def __init__(self, pool_regressors=None, k=7, knn_metric='minkowski', metrics='mse', threshold=0.2):
-        super(DES, self).__init__(pool_regressors=pool_regressors, k=k, knn_metric=knn_metric, metrics=metrics, threshold=threshold) 
+class DES(BaseDES): 
+    def __init__(self, pool_regressors=None, k=7, knn_metric='minkowski', metrics='mse', threshold=0.2, feature_selection=False):
+        super(DES, self).__init__(pool_regressors=pool_regressors, k=k, 
+                                  knn_metric=knn_metric, metrics=metrics, 
+                                  threshold=threshold, feature_selection=feature_selection) 
         
 
-    def fit(self, X_dsel=None, y_dsel=None):
-        X_dsel = X_dsel.reset_index(drop=True)
-        y_dsel = y_dsel.reset_index(drop=True)  
+    def fit(self, X_train=None, y_train=None, split=0.2, random_state=42):
+        X_train = X_train.reset_index(drop=True)
+        y_train = y_train.reset_index(drop=True)  
+
+        features = X_train.columns.tolist() 
+
+        X_train, X_dsel, y_train, y_dsel = train_test_split(X_train, y_train, test_size=split, random_state=random_state) 
 
         self.X_dsel = X_dsel 
-        self.y_dsel = y_dsel  
+        self.y_dsel = y_dsel 
+
+        if self.feature_selection: 
+            # feature importance 
+            model_rf = LGBMRegressor(verbose=-1, random_state=45)  
+            selector = RFE(model_rf, step=1)
+            selector = selector.fit(X_train, y_train) 
+    
+            self.selected_features = select(features, selector.support_) 
+        else: 
+            self.selected_features = features 
+
+        # Train models 
+        for model in self.pool_regressors: 
+            model.fit(X_train[self.selected_features], y_train) 
+
 
     
     def select(self, competences):
@@ -100,8 +153,8 @@ class DES(BaseDER):
         
         for i in self.selected_models_indices: 
             pred = get_value(self.pool_regressors[i].predict(query))  
-            final_prediction += pred * (1/competences[i]) 
-            weight_total += (1/competences[i]) 
+            final_prediction += pred * (1/(competences[i] + 1e-10)) 
+            weight_total += (1/(competences[i] + 1e-10)) 
 
             model_names.append(self.pool_regressors[i].__class__.__name__)
             individual_predictions.append(round(pred, 3)) 
@@ -144,25 +197,30 @@ class DES(BaseDER):
         weight_total = 0 
         
         for i in self.selected_models_indices: 
-            pred = get_value(self.pool_regressors[i].predict(query))  
-            final_prediction += pred * (1/competences[i]) 
-            weight_total += (1/competences[i]) 
+            pred = get_value(self.pool_regressors[i].predict(query[self.selected_features]))  
+            final_prediction += pred * (1/(competences[i] + 1e-10)) 
+            weight_total += (1/(competences[i] + 1e-10)) 
 
         final_prediction = final_prediction/weight_total
         
         return final_prediction
             
 
-    def predict(self, X):
+    def predict(self, X, external_xai: bool = False):
         preds = []  
-
+        external_contribution = [] 
+        
         for i in range(X.shape[0]):
             query = X.iloc[[i]] 
 
-            pred = self.predict_single_sample(query)
+            pred = self.predict_single_sample(query[self.selected_features])
             preds.append(pred) 
-        
-        return preds  
+            external_contribution.append(self.selected_models_indices)
+
+        if external_xai: 
+            return preds, count_model_occurrences(external_contribution)
+            
+        return preds
     
     
     def score(self, X, y): 
@@ -172,15 +230,36 @@ class DES(BaseDER):
 
 
 
-
-class DRS(BaseDER): 
-    def __init__(self, pool_regressors=None, k=7, knn_metric='minkowski', metrics='mse', threshold=0.2):
-        super(DRS, self).__init__(pool_regressors=pool_regressors, k=k, knn_metric=knn_metric, metrics=metrics, threshold=threshold) 
+class DRS(BaseDES): 
+    def __init__(self, pool_regressors=None, k=7, knn_metric='minkowski', metrics='mse', threshold=0.2, feature_selection=False):
+        super(DRS, self).__init__(pool_regressors=pool_regressors, k=k, knn_metric=knn_metric, metrics=metrics, 
+                                  threshold=threshold, feature_selection=feature_selection) 
         
 
-    def fit(self, X_dsel=None, y_dsel=None):
+    def fit(self, X_train=None, y_train=None, split=0.2, random_state=42):
+        X_train = X_train.reset_index(drop=True)
+        y_train = y_train.reset_index(drop=True)  
+
+        features = X_train.columns.tolist() 
+
+        X_train, X_dsel, y_train, y_dsel = train_test_split(X_train, y_train, test_size=split, random_state=random_state) 
+
         self.X_dsel = X_dsel 
-        self.y_dsel = y_dsel  
+        self.y_dsel = y_dsel 
+
+        if self.feature_selection: 
+            # feature importance 
+            model_rf = RandomForestRegressor(random_state=45)  
+            selector = RFE(model_rf, step=1)
+            selector = selector.fit(X_train, y_train) 
+    
+            self.selected_features = select(features, selector.support_) 
+        else: 
+            self.selected_features = features 
+
+        # Train models 
+        for model in self.pool_regressors: 
+            model.fit(X_train[self.selected_features], y_train) 
 
     
     def select(self, competences):  
@@ -204,7 +283,7 @@ class DRS(BaseDER):
 
         final_prediction = 0 
         for i in self.selected_models_indices: 
-            pred = get_value(self.pool_regressors[i].predict(query))  
+            pred = get_value(self.pool_regressors[i].predict(query[self.selected_features]))  
             final_prediction += pred  
 
         final_prediction = final_prediction/len(self.selected_models_indices)
@@ -218,7 +297,7 @@ class DRS(BaseDER):
         for i in range(X.shape[0]):
             query = X.iloc[[i]] 
 
-            pred = self.predict_single_sample(query)
+            pred = self.predict_single_sample(query[self.selected_features])
             preds.append(pred) 
         
         return preds 
